@@ -1,7 +1,6 @@
 /*
  * Copyright 2025 Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com))
  * * Project Site: https://github.com/hiperiondev/Interdigital_Bandpass_Filter *
- * * This code is based on: https://www.changpuak.ch/electronics/interdigital_bandpass_filter_designer.php
  *
  * This is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -128,8 +127,8 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     double end_zN = tap_zN + half_deltaN;
 
     // Validate port bounds
-    if (start_x1 < -box_length / 2 || start_x1 > box_length / 2 || start_z1 < 0 || end_z1 > lambda4_mm ||
-        start_xN < -box_length / 2 || start_xN > box_length / 2 || start_zN < 0 || end_zN > lambda4_mm) {
+    if (start_x1 < -box_length / 2 || start_x1 > box_length / 2 || start_z1 < 0 || end_z1 > lambda4_mm || start_xN < -box_length / 2
+            || start_xN > box_length / 2 || start_zN < 0 || end_zN > lambda4_mm) {
         fprintf(stderr, "Error: Port out of bounds (input: x=%.2f, z=[%.2f, %.2f], output: x=%.2f, z=[%.2f, %.2f])\n", start_x1, start_z1, end_z1, start_xN,
                 start_zN, end_zN);
         fclose(fp);
@@ -159,7 +158,7 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
 
     // Add cavity box (PEC walls)
     fprintf(fp, "start = [-box_l/2, -ground_spacing/2, 0]; stop = [box_l/2, ground_spacing/2, box_height];\n");
-    fprintf(fp, "CSX = AddBox(CSX, 'PEC', 10, start, stop);\n"); // Priority 10 for cavity
+    fprintf(fp, "CSX = AddBox(CSX, 'PEC', 10, start, stop);\n");  // Priority 10 for cavity
 
     // Add rods (cylinders)
     double delta_perp = 0.5;  // Assumed small perpendicular span for ports; adjust if needed
@@ -196,8 +195,12 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     fprintf(fp, "start_xN = %.2f; start_zN = %.2f; end_xN = %.2f; end_zN = %.2f;\n", start_xN, start_zN, start_xN, end_zN);
     fprintf(fp, "disp(['Input port: x = ', num2str(start_x1), ', z = [', num2str(start_z1), ', ', num2str(end_z1), ']']);\n");
     fprintf(fp, "disp(['Output port: x = ', num2str(start_xN), ', z = [', num2str(start_zN), ', ', num2str(end_zN), ']']);\n");
-    fprintf(fp, "[CSX, port{1}] = AddLumpedPort(CSX, 30, 1, %.2f, [start_x1 - delta_perp, -delta_perp, start_z1], [start_x1 + delta_perp, delta_perp, end_z1], [0 0 1], 1);\n", R_ohm);  // Input active
-    fprintf(fp, "[CSX, port{2}] = AddLumpedPort(CSX, 30, 2, %.2f, [start_xN - delta_perp, -delta_perp, start_zN], [start_xN + delta_perp, delta_perp, end_zN], [0 0 1]);\n", R_ohm);  // Output passive
+    fprintf(fp,
+            "[CSX, port{1}] = AddLumpedPort(CSX, 30, 1, %.2f, [start_x1 - delta_perp, -delta_perp, start_z1], [start_x1 + delta_perp, delta_perp, end_z1], [0 0 1], 1);\n",
+            R_ohm);  // Input active
+    fprintf(fp,
+            "[CSX, port{2}] = AddLumpedPort(CSX, 30, 2, %.2f, [start_xN - delta_perp, -delta_perp, start_zN], [start_xN + delta_perp, delta_perp, end_zN], [0 0 1]);\n",
+            R_ohm);  // Output passive
 
     // Excitation and dumps (fields)
     fprintf(fp, "CSX = AddDump(CSX, 'Et', 'DumpType', 0, 'DumpMode', 0);\n");  // E-field time-domain
@@ -218,9 +221,9 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     fprintf(fp, "hold on; plot(f/1e9, 20*log10(abs(s21)), 'b-', 'DisplayName', 'S21');\n");
     fprintf(fp, "xlabel('Frequency (GHz)'); ylabel('Magnitude (dB)'); legend; grid on;\n");
     fprintf(fp, "%% Save S-parameters to separate file\n");
-    fprintf(fp, "data = [f(:)/1e9, real(s11(:)), imag(s11(:)), real(s21(:)), imag(s21(:))];\n");
+    fprintf(fp, "data = [f(:)/1e9, real(s11(:)), imag(s11(:)), abs(s11(:)), real(s21(:)), imag(s21(:)), abs(s21(:))];\n");
     fprintf(fp, "fid = fopen('s_params.csv', 'w');\n");
-    fprintf(fp, "fprintf(fid, 'Frequency (GHz),Re(S11),Im(S11),Re(S21),Im(S21)\\n');\n");
+    fprintf(fp, "fprintf(fid, 'Frequency (GHz),Re(S11),Im(S11),|S11|,Re(S21),Im(S21),|S21|\\n');\n");
     fprintf(fp, "fclose(fid);\n");
     fprintf(fp, "dlmwrite('s_params.csv', data, '-append', 'delimiter', ',', 'precision', '%%.6f');\n");
     fprintf(fp, "disp('S-parameters saved to s_params.csv');\n");

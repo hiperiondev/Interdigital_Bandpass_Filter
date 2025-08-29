@@ -1,7 +1,6 @@
 /*
  * Copyright 2025 Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com))
  * * Project Site: https://github.com/hiperiondev/Interdigital_Bandpass_Filter *
- * * This code is based on: https://www.changpuak.ch/electronics/interdigital_bandpass_filter_designer.php
  *
  * This is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
