@@ -1,13 +1,25 @@
-/* interdigital_bpf.c
- Interdigital Bandpass Filter quick synthesizer (air-filled, round-rod cavity)
- - Quarter-wave resonators, alternate-short (interdigital)
- - k, Qe from low-pass prototype g-values (Butterworth or Chebyshev)
- - Coupling gaps from GM3SEK empirical formula
- - Tap from GM3SEK tapped-line formula
- - Rough Qu estimate and midband IL budget (IL_dB ≈ 4.343 * (QL/Qu) * sum(gk))
- - Simple narrowband insertion-loss template (Butterworth/Chebyshev mapping)
-
+/*
+ * Copyright 2025 Emiliano Augusto Gonzalez (egonzalez . hiperion @ gmail . com))
+ * * Project Site: https://github.com/hiperiondev/Interdigital_Bandpass_Filter *
+ * * This code is based on: https://www.changpuak.ch/electronics/interdigital_bandpass_filter_designer.php
+ *
+ * This is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3, or (at your option)
+ * any later version.
+ *
+ * This software is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this software; see the file COPYING.  If not, write to
+ * the Free Software Foundation, Inc., 51 Franklin Street,
+ * Boston, MA 02110-1301, USA.
+ *
  */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
