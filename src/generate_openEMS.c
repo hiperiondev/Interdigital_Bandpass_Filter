@@ -226,6 +226,13 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     fprintf(fp, "figure; plot(f/1e9, 20*log10(abs(s11)), 'k--', 'DisplayName', 'S11');\n");
     fprintf(fp, "hold on; plot(f/1e9, 20*log10(abs(s21)), 'b-', 'DisplayName', 'S21');\n");
     fprintf(fp, "xlabel('Frequency (GHz)'); ylabel('Magnitude (dB)'); legend; grid on;\n");
+    fprintf(fp, "%% Save S-parameters to separate file\n");
+    fprintf(fp, "data = [f(:)/1e9, real(s11(:)), imag(s11(:)), real(s21(:)), imag(s21(:))];\n");
+    fprintf(fp, "fid = fopen('s_params.csv', 'w');\n");
+    fprintf(fp, "fprintf(fid, 'Frequency (GHz),Re(S11),Im(S11),Re(S21),Im(S21)\\n');\n");
+    fprintf(fp, "fclose(fid);\n");
+    fprintf(fp, "dlmwrite('s_params.csv', data, '-append', 'delimiter', ',', 'precision', '%%.6f');\n");
+    fprintf(fp, "disp('S-parameters saved to s_params.csv');\n");
 
     fclose(fp);
     printf("openEMS script written to %s\n", filename);

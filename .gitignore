@@ -63,3 +63,4 @@ build/
 *.pdf
 sim_bpf/
 bpf_sim.m
+s_params.csv
