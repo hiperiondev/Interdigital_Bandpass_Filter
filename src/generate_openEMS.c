@@ -68,7 +68,7 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     fprintf(fp, "disp(['box_l = ', num2str(box_l), ' mm']);\n");
     fprintf(fp, "disp(['ground_spacing = ', num2str(ground_spacing), ' mm']);\n");
     fprintf(fp, "disp(['box_height = ', num2str(box_height), ' mm']);\n");
-    fprintf(fp, "FDTD = InitFDTD('NrTS', 30000000, 'EndCriteria', 1e-5);\n");
+    fprintf(fp, "FDTD = InitFDTD('NrTS', 5000000, 'EndCriteria', 1e-4);\n");
     fprintf(fp, "FDTD = SetGaussExcite(FDTD, f0, (f_max - f_min)/2);\n");
     fprintf(fp, "BC = {'PEC' 'PEC' 'PEC' 'PEC' 'PEC' 'PEC'}; %% All PEC for closed metal cavity\n");
     fprintf(fp, "FDTD = SetBoundaryCond(FDTD, BC);\n");
@@ -76,7 +76,7 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     // CSX and mesh
     fprintf(fp, "CSX = InitCSX();\n");
     fprintf(fp, "CSX = AddMetal(CSX, 'PEC'); %% Define Perfect Electric Conductor (PEC)\n");
-    fprintf(fp, "resolution = c0 / (f_max) / unit / 20; %% lambda/20 for finer mesh\n");
+    fprintf(fp, "resolution = c0 / (f_max) / unit / 12; %% Base mesh lambda/12 (~2.5mm) for reduced cell count\n");
     fprintf(fp, "mesh.x = linspace(-box_l/2, box_l/2, max(3, ceil(box_l / resolution)));\n");
     fprintf(fp, "mesh.y = linspace(-ground_spacing/2, ground_spacing/2, max(3, ceil(ground_spacing / resolution)));\n");
     fprintf(fp, "mesh.z = linspace(0, box_height, max(3, ceil(box_height / resolution)));\n");
@@ -87,11 +87,15 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     double Qe = 1.0 / FBW;  // Approximate symmetric Qe for Butterworth
     double tap_norm = sqrt(R_ohm / (M_PI * QL * Qe));  // Normalized tap from grounded end
 
-    double tap_z1 = 0.0, tap_zN = 0.0;
-    double half_delta1 = 0.0, half_deltaN = 0.0;
-    double delta_z = 1.0;  // Small z-span for tap gaps
+    double delta_z = 1.5;  // Z-span for ports (unchanged, sufficient for mesh)
+    double delta_perp = 0.5;  // X/Y span for 1D z-directed ports
+
+    // Define port variables
+    double start_x1 = 0.0, start_z1 = 0.0, end_z1 = 0.0;
+    double start_xN = 0.0, start_zN = 0.0, end_zN = 0.0;
 
     for (int i = 1; i <= ele; i++) {
+        double x = pos[i] - box_length / 2;
         double len = rod_lengths[i - 1];
         double open_z = 0.0;
         if (i % 2 == 1) {  // Odd
@@ -99,59 +103,73 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
         } else {  // Even
             open_z = lambda4_mm - len;
         }
-        // Refine around open with clipped range to avoid out-of-bounds
-        fprintf(fp, "mesh.z = sort(unique([mesh.z, linspace(max(0,%.2f -3), min(%.2f,%.2f +3), 5)]));\n", open_z, lambda4_mm, open_z);
+        // Refine around open end (tighter, fewer points)
+        fprintf(fp, "mesh.z = sort(unique([mesh.z, linspace(max(0,%.2f -1.0), min(%.2f,%.2f +1.0), 2)]));\n", open_z, lambda4_mm, open_z);
 
         if (i == 1 || i == ele) {
             double tap_z = (i % 2 == 1) ? tap_norm * len : lambda4_mm - tap_norm * len;
             double z_start = (i % 2 == 1) ? 0.0 : lambda4_mm - len;
+            double z_end = (i % 2 == 1) ? len : lambda4_mm;
             double half_delta = delta_z / 2.0;
-            half_delta = fmin(half_delta, tap_z - z_start);
+            double lower_end = tap_z - half_delta;
+            double upper_start = tap_z + half_delta;
+
+            // Set port positions
             if (i == 1) {
-                tap_z1 = tap_z;
-                half_delta1 = half_delta;
+                start_x1 = x;
+                start_z1 = lower_end;
+                end_z1 = upper_start;
             }
             if (i == ele) {
-                tap_zN = tap_z;
-                half_deltaN = half_delta;
+                start_xN = x;
+                start_zN = lower_end;
+                end_zN = upper_start;
             }
+
+            // Add refinements for tap_z, port z-edges, and x-position (tighter, fewer points)
+            fprintf(fp, "mesh.z = sort(unique([mesh.z, linspace(max(0,%.2f -1.0), min(%.2f,%.2f +1.0), 2)]));\n", tap_z, lambda4_mm, tap_z);
+            fprintf(fp, "mesh.z = sort(unique([mesh.z, %.2f, %.2f]));\n", lower_end, upper_start);
+            fprintf(fp, "mesh.x = sort(unique([mesh.x, linspace(%.2f -1.0, %.2f +1.0, 2)]));\n", x, x);
+            // Debug: Log x-mesh after each refinement
+            fprintf(fp, "fid = fopen([Sim_Path, '/mesh_debug.txt'], 'a'); fprintf(fid, 'x-mesh after rod %d: %%s\\n', num2str(mesh.x)); fclose(fid);\n", i);
+
+            // Lower part
+            if (lower_end > z_start) {
+                fprintf(fp, "start = [%.2f, 0, %.2f]; stop = [%.2f, 0, %.2f];\n", x, z_start, x, lower_end);
+                fprintf(fp, "CSX = AddCylinder(CSX, 'PEC', 20, start, stop, %.2f);\n", D_mm / 2);
+            }
+            // Upper part
+            if (upper_start < z_end) {
+                fprintf(fp, "start = [%.2f, 0, %.2f]; stop = [%.2f, 0, %.2f];\n", x, upper_start, x, z_end);
+                fprintf(fp, "CSX = AddCylinder(CSX, 'PEC', 20, start, stop, %.2f);\n", D_mm / 2);
+            }
+        } else {
+            // Full cylinder for middle rods
+            double z_start = (i % 2 == 1) ? 0.0 : lambda4_mm - len;
+            double z_end = (i % 2 == 1) ? len : lambda4_mm;
+            fprintf(fp, "start = [%.2f, 0, %.2f]; stop = [%.2f, 0, %.2f];\n", x, z_start, x, z_end);
+            fprintf(fp, "CSX = AddCylinder(CSX, 'PEC', 20, start, stop, %.2f);\n", D_mm / 2);
+            // Refine middle rod ends (optional, minimal)
+            fprintf(fp, "mesh.z = sort(unique([mesh.z, linspace(max(0,%.2f -1.0), min(%.2f,%.2f +1.0), 2)]));\n", open_z, lambda4_mm, open_z);
+            fprintf(fp, "fid = fopen([Sim_Path, '/mesh_debug.txt'], 'a'); fprintf(fid, 'x-mesh after rod %d: %%s\\n', num2str(mesh.x)); fclose(fid);\n", i);
         }
     }
 
-    // Calculate port positions
-    double start_x1 = pos[1] - box_length / 2.0;
-    double start_xN = pos[ele] - box_length / 2.0;
-    double start_z1 = tap_z1 - half_delta1;
-    double end_z1 = tap_z1 + half_delta1;
-    double start_zN = tap_zN - half_deltaN;
-    double end_zN = tap_zN + half_deltaN;
-
-    // Validate port bounds
-    if (start_x1 < -box_length / 2 || start_x1 > box_length / 2 || start_z1 < 0 || end_z1 > lambda4_mm || start_xN < -box_length / 2
-            || start_xN > box_length / 2 || start_zN < 0 || end_zN > lambda4_mm) {
-        fprintf(stderr, "Error: Port out of bounds (input: x=%.2f, z=[%.2f, %.2f], output: x=%.2f, z=[%.2f, %.2f])\n", start_x1, start_z1, end_z1, start_xN,
-                start_zN, end_zN);
-        fclose(fp);
-        exit(1);
-    }
-
-    fprintf(fp, "mesh.z = sort(unique([mesh.z, linspace(%.2f, %.2f, 3), linspace(%.2f, %.2f, 3)]));\n", start_z1, end_z1, start_zN, end_zN);
-
-    // Manual merge of close points to prevent tiny cells
+    // Consolidate mesh and log final sizes
+    fprintf(fp, "mesh.x = sort(unique(mesh.x));\n");
+    fprintf(fp, "mesh.y = sort(unique(mesh.y));\n");
     fprintf(fp, "mesh.z = sort(unique(mesh.z));\n");
-    fprintf(fp, "temp = [];\n");
-    fprintf(fp, "for ii=1:length(mesh.z)-1\n");
-    fprintf(fp, "  if mesh.z(ii+1) - mesh.z(ii) > 0.1\n");
-    fprintf(fp, "    temp = [temp, mesh.z(ii)];\n");
-    fprintf(fp, "  end\n");
-    fprintf(fp, "end\n");
-    fprintf(fp, "temp = [temp, mesh.z(end)];\n");
-    fprintf(fp, "mesh.z = temp;\n");
+    fprintf(fp, "fid = fopen([Sim_Path, '/mesh_debug.txt'], 'a');\n");
+    fprintf(fp, "fprintf(fid, 'Final mesh.x (%%d points): %%s\\n', length(mesh.x), num2str(mesh.x));\n");
+    fprintf(fp, "fprintf(fid, 'Final mesh.y (%%d points): %%s\\n', length(mesh.y), num2str(mesh.y));\n");
+    fprintf(fp, "fprintf(fid, 'Final mesh.z (%%d points): %%s\\n', length(mesh.z), num2str(mesh.z));\n");
+    fprintf(fp, "fprintf(fid, 'Estimated cell count: %%d\\n', length(mesh.x) * length(mesh.y) * length(mesh.z));\n");
+    fprintf(fp, "fclose(fid);\n");
 
     // Smooth mesh with higher ratio
-    fprintf(fp, "mesh.x = SmoothMeshLines(mesh.x, resolution / 5, 5.0);\n");
-    fprintf(fp, "mesh.y = SmoothMeshLines(mesh.y, resolution / 5, 5.0);\n");
-    fprintf(fp, "mesh.z = SmoothMeshLines(mesh.z, resolution / 5, 5.0);\n");
+    fprintf(fp, "mesh.x = SmoothMeshLines(mesh.x, resolution / 4, 15.0);\n");
+    fprintf(fp, "mesh.y = SmoothMeshLines(mesh.y, resolution / 4, 15.0);\n");
+    fprintf(fp, "mesh.z = SmoothMeshLines(mesh.z, resolution / 4, 15.0);\n");
 
     // Define the rectangular grid
     fprintf(fp, "CSX = DefineRectGrid(CSX, unit, mesh);\n");
@@ -159,35 +177,6 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     // Add cavity box (PEC walls)
     fprintf(fp, "start = [-box_l/2, -ground_spacing/2, 0]; stop = [box_l/2, ground_spacing/2, box_height];\n");
     fprintf(fp, "CSX = AddBox(CSX, 'PEC', 10, start, stop);\n");  // Priority 10 for cavity
-
-    // Add rods (cylinders)
-    double delta_perp = 0.5;  // Assumed small perpendicular span for ports; adjust if needed
-    for (int i = 1; i <= ele; i++) {
-        double x = pos[i] - box_length / 2;
-        double len = rod_lengths[i - 1];
-        double z_start = (i % 2 == 1) ? 0.0 : lambda4_mm - len;
-        double z_end = (i % 2 == 1) ? len : lambda4_mm;
-        if (i == 1 || i == ele) {
-            double tap_z = (i == 1) ? tap_z1 : tap_zN;
-            double half_delta = (i == 1) ? half_delta1 : half_deltaN;
-            // Lower part
-            double lower_end = tap_z - half_delta;
-            if (lower_end > z_start) {
-                fprintf(fp, "start = [%.2f, 0, %.2f]; stop = [%.2f, 0, %.2f];\n", x, z_start, x, lower_end);
-                fprintf(fp, "CSX = AddCylinder(CSX, 'PEC', 20, start, stop, %.2f);\n", D_mm / 2);
-            }
-            // Upper part
-            double upper_start = tap_z + half_delta;
-            if (upper_start < z_end) {
-                fprintf(fp, "start = [%.2f, 0, %.2f]; stop = [%.2f, 0, %.2f];\n", x, upper_start, x, z_end);
-                fprintf(fp, "CSX = AddCylinder(CSX, 'PEC', 20, start, stop, %.2f);\n", D_mm / 2);
-            }
-        } else {
-            // Full cylinder for middle rods
-            fprintf(fp, "start = [%.2f, 0, %.2f]; stop = [%.2f, 0, %.2f];\n", x, z_start, x, z_end);
-            fprintf(fp, "CSX = AddCylinder(CSX, 'PEC', 20, start, stop, %.2f);\n", D_mm / 2);
-        }
-    }
 
     // Ports (across gaps)
     fprintf(fp, "delta_perp = %.2f;\n", delta_perp);
@@ -212,11 +201,17 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     fprintf(fp, "disp('XML written, verifying geometry...'); pause(1);\n");  // Debug pause
     fprintf(fp, "RunOpenEMS(Sim_Path, 'bpf.xml');\n");
 
-    // Post-process S-params
+    // Post-process S-params (with checks for division by zero to avoid NaNs)
     fprintf(fp, "f = linspace(f_min, f_max, 2001);\n");
     fprintf(fp, "port = calcPort(port, Sim_Path, f);\n");
-    fprintf(fp, "s11 = port{1}.uf.ref ./ port{1}.uf.inc;\n");
-    fprintf(fp, "s21 = port{2}.uf.ref ./ port{1}.uf.inc;\n");
+    fprintf(fp, "for ii=1:length(f)\n");
+    fprintf(fp, "  if abs(port{1}.uf.inc(ii)) > 1e-10\n");
+    fprintf(fp, "    s11(ii) = port{1}.uf.ref(ii) ./ port{1}.uf.inc(ii);\n");
+    fprintf(fp, "    s21(ii) = port{2}.uf.ref(ii) ./ port{1}.uf.inc(ii);\n");
+    fprintf(fp, "  else\n");
+    fprintf(fp, "    s11(ii) = 1; s21(ii) = 0; %% Fallback for zero incident\n");
+    fprintf(fp, "  end\n");
+    fprintf(fp, "end\n");
     fprintf(fp, "figure; plot(f/1e9, 20*log10(abs(s11)), 'k--', 'DisplayName', 'S11');\n");
     fprintf(fp, "hold on; plot(f/1e9, 20*log10(abs(s21)), 'b-', 'DisplayName', 'S21');\n");
     fprintf(fp, "xlabel('Frequency (GHz)'); ylabel('Magnitude (dB)'); legend; grid on;\n");
