@@ -22,6 +22,13 @@
 #ifndef GENERATE_OPENEMS_H_
 #define GENERATE_OPENEMS_H_
 
+typedef enum FILTER_MATERIALS {
+    FM_PEC,
+    FM_COPPER,
+    FM_BRASS,
+    FM_ALUMINUM,
+} filter_material_t;
+
 void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz, double R_ohm, double H_mm, double D_mm, double E_mm, int ele, double ripple_dB,
         double *pos, double *gap, double *rod_lengths);
 

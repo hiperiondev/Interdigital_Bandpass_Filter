@@ -19,23 +19,69 @@
  *
  */
 
-/* --------------------------------------------------------------------------
- Interdigital round-rod resonator length — geometry-aware first-pass
- - Air-filled, two lids (stripline-like), quarter-wave rods
- - Accounts for: d/h via equivalent strip width, lid spacing h, end-gap g
- - Keeps your legacy "length factor" available if you still want it.
- References in comments; see analysis note.
- -------------------------------------------------------------------------- */
-
-#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+#include <complex.h>
 
 /* Physical constants */
 #ifndef C0
 #define C0 299792458.0
 #endif
 
-static inline double clampd(double x, double lo, double hi) {
+double toinch(double mm) {
+    return mm * 0.03937007874015748;
+}
+
+/* Butterworth prototype g-values (ripple = 0). g0=g_{n+1}=1. */
+void butterworth_g(int n, double *g) {
+    g[0] = 1.0;
+    for (int k = 1; k <= n; k++) {
+        g[k] = 2.0 * sin((2.0 * k - 1.0) * M_PI / (2.0 * n));
+    }
+    g[n + 1] = 1.0;
+}
+
+/* Chebyshev prototype g-values (equal ripple r dB).
+ Reference: standard closed-form from many texts/Wikipedia. */
+void chebyshev_g(int n, double ripple_dB, double *g) {
+    /* Compute epsilon and beta (standard definition) */
+    double eps = sqrt(pow(10.0, ripple_dB / 10.0) - 1.0);
+    double beta = asinh(1.0 / eps) / n;
+
+    /* Base term */
+    g[0] = 1.0;
+
+    /* Recurrence arrays (sized to safely handle n <= 30) */
+    double sinhb = sinh(beta);
+    double a[64] = { 0 }, b[64];
+
+    /* compute a_k */
+    for (int k = 1; k <= n; k++) {
+        a[k] = sin((2.0 * k - 1.0) * M_PI / (2.0 * n));
+    }
+
+    /* compute b_k = sinh^2(beta) + sin^2(k*pi/n) for k=1..n-1 */
+    for (int k = 1; k <= n - 1; k++) {
+        double s = sin(k * M_PI / n);
+        b[k] = sinhb * sinhb + s * s;
+    }
+
+    /* g1 and recurrence for gk */
+    g[1] = (2.0 * a[1]) / sinhb;
+    for (int k = 2; k <= n; k++) {
+        g[k] = (4.0 * a[k - 1] * a[k]) / (b[k - 1] * g[k - 1]);
+    }
+
+    if ((n % 2) == 0) {
+        g[n + 1] = 1.0;
+    } else {
+        double tb2 = tanh(0.5 * beta);
+        g[n + 1] = 1.0 / (tb2 * tb2);
+    }
+}
+
+double clamp(double x, double lo, double hi) {
     return (x < lo) ? lo : (x > hi) ? hi : x;
 }
 
@@ -69,7 +115,7 @@ static inline double round_rod_equivalent_strip_width(double d) {
  -------------------------------------------------------------------------- */
 static double open_end_delta_l_from_w_h(double w, double h) {
     const double er_eff = 1.0; /* air-filled */
-    const double wh = clampd(w / h, 1e-6, 1e6);
+    const double wh = clamp(w / h, 1e-6, 1e6);
     const double num1 = (er_eff + 0.3);
     const double den1 = (er_eff - 0.258);
     /* Guard against division by near-zero if someone forces er_eff≈0.258 */
@@ -141,7 +187,7 @@ double interdigital_round_rod_length_corrected(double f0, double d, double h, do
     /* Safety clamps: don’t let us go crazy if inputs are odd */
     const double minL = 0.75 * Lq; /* generous lower bound */
     const double maxL = 1.05 * Lq; /* and upper bound */
-    L = clampd(L, minL, maxL);
+    L = clamp(L, minL, maxL);
 
     if (keep_legacy_factor) {
         L *= legacy_factor_value; /* optional compatibility layer */
@@ -150,7 +196,6 @@ double interdigital_round_rod_length_corrected(double f0, double d, double h, do
     /* diagnostics */
     //printf("[rod-length] f0=%.6f MHz  Lq=%.6f mm  ΔL_open=%.3f mm  ΔL_gap=%.3f mm  -> L=%.6f mm%s\n", f0 * 1e-6, Lq * 1e3, dL_open * 1e3, dL_gap * 1e3, L * 1e3,
     //        keep_legacy_factor ? " (legacy factor applied)" : "");
-
     return L;
 }
 
@@ -163,5 +208,143 @@ double rod_length(double f0, double h, double d, double length_factor) {
     double L = interdigital_round_rod_length_corrected(f0, d, h, assumed_g, keep, length_factor);
 
     return L;
+}
+
+/* Build coupling matrix M (NxN) from nearest-neighbour couplings */
+void build_coupling_matrix_from_k(const double *k, int N, double **M) {
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            M[i][j] = 0.0;
+        }
+    }
+
+    for (int i = 0; i < N - 1; ++i) {
+        double kij = fabs(k[i]); /* keep magnitude input safe */
+        double sgn = (i % 2 == 0) ? +1.0 : -1.0; /* alternate sign for interdigital */
+        double v = sgn * kij; /* apply sign pattern */
+        M[i][i + 1] = v; /* signed coupling i <-> i+1 */
+        M[i + 1][i] = v; /* enforce symmetry */
+    }
+}
+
+/* Compute S-parameters from coupling matrix */
+void compute_sparams_from_M(int N, double **M, double f0, double BW, /* added BW argument */
+double Qe1, double QeN, double Qu, const double *freqs, int F, double complex *S11, double complex *S21) {
+    int NA = N + 2; /* augmented size: source + N + load */
+    double FBW = BW / f0; /* fractional bandwidth */
+
+    /* allocate dynamic arrays (complex) */
+    double complex *A = (double complex*) calloc((size_t) NA * (size_t) NA, sizeof(double complex));
+    double complex *Inv = (double complex*) calloc((size_t) NA * (size_t) NA, sizeof(double complex));
+    double complex *Work = (double complex*) calloc((size_t) NA * (size_t) (2 * NA), sizeof(double complex));
+
+    if (!A || !Inv || !Work) {
+        fprintf(stderr, "Allocation failed in compute_sparams_from_M\n");
+        free(A);
+        free(Inv);
+        free(Work);
+        return;
+    }
+
+    /* Build frequency-independent part: M_aug */
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            A[(i + 1) * NA + (j + 1)] = M[i][j];
+        }
+    }
+
+    /* External couplings */
+    double ms = (Qe1 > 0.0) ? (1.0 / sqrt(Qe1)) : 0.0;
+    double ml = (QeN > 0.0) ? (1.0 / sqrt(QeN)) : 0.0;
+    A[0 * NA + 1] = ms;
+    A[1 * NA + 0] = ms;
+    A[N * NA + (N + 1)] = ml;
+    A[(N + 1) * NA + N] = ml;
+
+    /* Loss factor */
+    double dloss = (Qu > 0.0) ? (1.0 / (2.0 * Qu)) : 0.0;
+
+    for (int t = 0; t < F; ++t) {
+        double f = freqs[t];
+
+        /* correct normalized low-pass variable using BW */
+        double Omega = (f * f - f0 * f0) / (f * f0 * FBW);
+
+        /* Form A(ω) as augmented matrix [A(ω) | I] */
+        for (int r = 0; r < NA; ++r) {
+            for (int c = 0; c < NA; ++c) {
+                Work[r * (2 * NA) + c] = A[r * NA + c];
+            }
+        }
+
+        for (int r = 0; r < NA; ++r) {
+            for (int c = 0; c < NA; ++c) {
+                Work[r * (2 * NA) + (NA + c)] = (r == c) ? 1.0 + 0.0 * I : 0.0 + 0.0 * I;
+            }
+
+            if (r == 0 || r == NA - 1) {
+                Work[r * (2 * NA) + r] += -I; /* -j*G on ports */
+            } else {
+                Work[r * (2 * NA) + r] += (Omega + I * dloss); /* Ω + j*loss on resonators */
+            }
+        }
+
+        /* -------- Gauss-Jordan inversion -------- */
+        for (int col = 0; col < NA; ++col) {
+            int piv = col;
+            double best = cabs(Work[piv * (2 * NA) + col]);
+            for (int r = col + 1; r < NA; ++r) {
+                double mag = cabs(Work[r * (2 * NA) + col]);
+                if (mag > best) {
+                    best = mag;
+                    piv = r;
+                }
+            }
+            if (best == 0.0) {
+                S11[t] = NAN + NAN * I;
+                S21[t] = NAN + NAN * I;
+                goto next_frequency;
+            }
+            if (piv != col) {
+                for (int c = 0; c < 2 * NA; ++c) {
+                    double complex tmp = Work[col * (2 * NA) + c];
+                    Work[col * (2 * NA) + c] = Work[piv * (2 * NA) + c];
+                    Work[piv * (2 * NA) + c] = tmp;
+                }
+            }
+            double complex pivval = Work[col * (2 * NA) + col];
+            for (int c = 0; c < 2 * NA; ++c) {
+                Work[col * (2 * NA) + c] /= pivval;
+            }
+            for (int r = 0; r < NA; ++r) {
+                if (r == col)
+                    continue;
+                double complex factor = Work[r * (2 * NA) + col];
+                if (factor != 0.0 + 0.0 * I) {
+                    for (int c = 0; c < 2 * NA; ++c) {
+                        Work[r * (2 * NA) + c] -= factor * Work[col * (2 * NA) + c];
+                    }
+                }
+            }
+        }
+
+        /* Extract inverse */
+        for (int r = 0; r < NA; ++r) {
+            for (int c = 0; c < NA; ++c) {
+                Inv[r * NA + c] = Work[r * (2 * NA) + (NA + c)];
+            }
+        }
+
+        /* Compute S11 and S21 */
+        S11[t] = 1.0 + 2.0 * I * Inv[0 * NA + 0];
+        S21[t] = -2.0 * I * Inv[(NA - 1) * NA + 0];
+
+        next_frequency:
+        ;
+    }
+
+    free(A);
+    free(Inv);
+    free(Work);
 }
 
