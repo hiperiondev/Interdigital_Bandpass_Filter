@@ -64,3 +64,7 @@ build/
 sim_bpf/
 bpf_sim.m
 s_params.csv
+filter.dxf
+"#filter.dxf"
+filter_csx.xml
+sim/

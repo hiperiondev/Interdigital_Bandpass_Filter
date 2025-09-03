@@ -30,5 +30,5 @@
 #! /bin/bash
 
 clear
-valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose Release/test_filter $1
+valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --verbose Release/Interdigital_Bandpass_Filter $1
 rm vgcore*

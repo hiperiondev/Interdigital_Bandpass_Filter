@@ -23,13 +23,18 @@
 #define GENERATE_OPENEMS_H_
 
 typedef enum FILTER_MATERIALS {
-    FM_PEC,
-    FM_COPPER,
-    FM_BRASS,
-    FM_ALUMINUM,
+    FM_PEC,      // pec
+    FM_COPPER,   // copper
+    FM_BRASS,    // brass
+    FM_ALUMINUM, // aluminum
 } filter_material_t;
 
+extern const char *material_str[];
+
 void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz, double R_ohm, double H_mm, double D_mm, double E_mm, int ele, double ripple_dB,
-        double *pos, double *gap, double *rod_lengths);
+        double *pos, double *gap, double *rod_lengths, double box_height, double box_length, double tap_z1, double tap_zN, filter_material_t material);
+
+void generate_dxf(const char *filename, double f0_MHz, double BW_MHz, double R_ohm, double H_mm, double D_mm, double E_mm, int ele, double ripple_dB,
+        double *pos, double *gap, double *rod_lengths, double box_height, double box_length, double tap_z1, double tap_zN);
 
 #endif /* GENERATE_OPENEMS_H_ */

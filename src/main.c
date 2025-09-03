@@ -23,45 +23,128 @@
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
+#include <errno.h>
 
 #include "calculations.h"
-#include "generate_openEMS.h"
+#include "generate.h"
 
-int main(void) {
+static void print_usage(const char *prog_name) {
+    fprintf(stderr, "Usage: %s [f0_MHz BW_MHz R_ohm H_mm D_mm E_mm NFR ele ripple_dB material(0=PEC, 1=copper, 2=brass, 3=aluminum]\n", prog_name);
+    fprintf(stderr, "Example: %s 1090 10 50 30 4 20 100 3 0.1 1\n", prog_name);
+    fprintf(stderr, "If no arguments are provided, the program will prompt for each value interactively.\n");
+}
+
+int main(int argc, char *argv[]) {
     double f0_MHz, BW_MHz, R_ohm, H_mm, D_mm, E_mm;
     int NFR, ele;
     double ripple_dB;
+    double E_target_mm = 0;
+    char *endptr;  // For strtod/strtol error checking
+    int material = 0;
 
-    printf("Center frequency f0 (MHz): ");
-    if (scanf("%lf", &f0_MHz) != 1)
-        return 1;
-    printf("Bandwidth BW (MHz): ");
-    if (scanf("%lf", &BW_MHz) != 1)
-        return 1;
-    printf("System impedance R (Ohm): ");
-    if (scanf("%lf", &R_ohm) != 1)
-        return 1;
-    printf("Ground-plane height H (mm) (recommended lambda/4: %.3f) :", (double) (299792458.0 / (4.0 * (f0_MHz * 1e6))) * 1000.0);
-    if (scanf("%lf", &H_mm) != 1)
-        return 1;
+    if (argc == 11) {  // Program name + 9 parameters
+        // Parse command-line arguments
+        f0_MHz = strtod(argv[1], &endptr);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid f0_MHz: %s\n", argv[1]);
+            print_usage(argv[0]);
+            return 1;
+        }
+        BW_MHz = strtod(argv[2], &endptr);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid BW_MHz: %s\n", argv[2]);
+            print_usage(argv[0]);
+            return 1;
+        }
+        R_ohm = strtod(argv[3], &endptr);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid R_ohm: %s\n", argv[3]);
+            print_usage(argv[0]);
+            return 1;
+        }
+        H_mm = strtod(argv[4], &endptr);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid H_mm: %s\n", argv[4]);
+            print_usage(argv[0]);
+            return 1;
+        }
+        D_mm = strtod(argv[5], &endptr);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid D_mm: %s\n", argv[5]);
+            print_usage(argv[0]);
+            return 1;
+        }
+        E_mm = strtod(argv[6], &endptr);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid E_mm: %s\n", argv[6]);
+            print_usage(argv[0]);
+            return 1;
+        }
+        NFR = (int) strtol(argv[7], &endptr, 10);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid NFR: %s\n", argv[7]);
+            print_usage(argv[0]);
+            return 1;
+        }
+        ele = (int) strtol(argv[8], &endptr, 10);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid ele: %s\n", argv[8]);
+            print_usage(argv[0]);
+            return 1;
+        }
+        ripple_dB = strtod(argv[9], &endptr);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid ripple_dB: %s\n", argv[9]);
+            print_usage(argv[0]);
+            return 1;
+        }
 
-    double E_target_mm = 0.7 * H_mm;
+        material = strtod(argv[10], &endptr);
+        if (*endptr != '\0') {
+            fprintf(stderr, "Invalid material: %s\n", argv[10]);
+            print_usage(argv[0]);
+            return 1;
+        }
+    } else if (argc == 1) {
+        // Interactive prompts (original behavior)
+        printf("Center frequency f0 (MHz): ");
+        if (scanf("%lf", &f0_MHz) != 1)
+            return 1;
+        printf("Bandwidth BW (MHz): ");
+        if (scanf("%lf", &BW_MHz) != 1)
+            return 1;
+        printf("System impedance R (Ohm): ");
+        if (scanf("%lf", &R_ohm) != 1)
+            return 1;
+        printf("Ground-plane height H (mm) (recommended lambda/4: %.3f) :", (double) (299792458.0 / (4.0 * (f0_MHz * 1e6))) * 1000.0);
+        if (scanf("%lf", &H_mm) != 1)
+            return 1;
 
-    printf("Rod diameter D (mm)  (recommended H/3:  %.3f) :", (double) (H_mm / 3));
-    if (scanf("%lf", &D_mm) != 1)
+        E_target_mm = 0.7 * H_mm;
+
+        printf("Rod diameter D (mm)  (recommended H/3:  %.3f) :", (double) (H_mm / 3));
+        if (scanf("%lf", &D_mm) != 1)
+            return 1;
+        printf("End spacing E (mm) (GM3SEK recommended:  %.3f mm): ", E_target_mm);
+        if (scanf("%lf", &E_mm) != 1)
+            return 1;
+        printf("Number of freq points NFR: ");
+        if (scanf("%d", &NFR) != 1)
+            return 1;
+        printf("Number of elements ele [2..19]: ");
+        if (scanf("%d", &ele) != 1)
+            return 1;
+        printf("Passband ripple rip (dB) [0=Butterworth]: ");
+        if (scanf("%lf", &ripple_dB) != 1)
+            return 1;
+        printf("Material(0=PEC, 1=copper, 2=brass, 3=aluminum: ");
+        if (scanf("%d", &material) != 1)
+            return 1;
+    } else {
+        // Incorrect number of arguments
+        print_usage(argv[0]);
         return 1;
-    printf("End spacing E (mm) (GM3SEK recommended:  %.3f mm): ", E_target_mm);
-    if (scanf("%lf", &E_mm) != 1)
-        return 1;
-    printf("Number of freq points NFR: ");
-    if (scanf("%d", &NFR) != 1)
-        return 1;
-    printf("Number of elements ele [2..19]: ");
-    if (scanf("%d", &ele) != 1)
-        return 1;
-    printf("Passband ripple rip (dB) [0=Butterworth]: ");
-    if (scanf("%lf", &ripple_dB) != 1)
-        return 1;
+    }
 
     ele = (int) clamp(ele, 2, 19);
     NFR = (int) clamp(NFR, 11, 20001); /* keep reasonable */
@@ -85,7 +168,7 @@ int main(void) {
     const double FBW = BW / f0;
     const double QL = f0 / BW;
 
-    double g[32] = { 0 }; // g0..g_{n+1}
+    double g[32] = { 0 };  // g0..g_{n+1}
     if (ripple_dB <= 0.0) {
         butterworth_g(ele, g);
     } else {
@@ -93,7 +176,7 @@ int main(void) {
     }
 
     // Couplings and external Q
-    double *k = (double*) calloc(ele, sizeof(double)); // k[1..ele-1]
+    double *k = (double*) calloc(ele, sizeof(double));  // k[1..ele-1]
     for (int i = 1; i <= ele - 1; i++) {
         k[i] = FBW / sqrt(g[i] * g[i + 1]);
     }
@@ -101,22 +184,22 @@ int main(void) {
     double QeN = (g[ele] * g[ele + 1]) / FBW;
 
     // Spacing (edge-edge) from k, then center-center = gap + D
-    double *gap = (double*) calloc(ele, sizeof(double)); // c[i]=gap between i and i+1, edge-edge
-    double *cc = (double*) calloc(ele, sizeof(double)); // center-center distances
+    double *gap = (double*) calloc(ele, sizeof(double));  // c[i]=gap between i and i+1, edge-edge
+    double *cc = (double*) calloc(ele, sizeof(double));  // center-center distances
     double d_over_h = D_mm / H_mm;
     for (int i = 1; i <= ele - 1; i++) {
         double Ki = k[i];
         if (Ki <= 0)
             Ki = 1e-6;
         double c_over_h = (log10(1.0 / Ki) + 0.91 * (d_over_h) - 0.048) / 1.37; /* GM3SEK */
-        gap[i] = c_over_h * H_mm; // edge-edge
+        gap[i] = c_over_h * H_mm;  // edge-edge
         if (gap[i] < 0.0)
             gap[i] = 0.0;
-        cc[i] = gap[i] + D_mm; // center-center
+        cc[i] = gap[i] + D_mm;  // center-center
     }
 
     // Box coordinates along length: wall(0), center1=E, center2=E+cc1, ... , right wall = last center + E
-    double *pos = (double*) calloc(ele + 2, sizeof(double)); // position of: 0: left wall, 1..ele: centers, ele+1: right wall
+    double *pos = (double*) calloc(ele + 2, sizeof(double));  // position of: 0: left wall, 1..ele: centers, ele+1: right wall
     pos[0] = 0.0;
     pos[1] = E_mm;
     for (int i = 2; i <= ele; i++) {
@@ -126,7 +209,7 @@ int main(void) {
     double box_length = pos[ele + 1];
 
     // Quarter-wave height (air)
-    const double c0 = 299792458.0; // m/s
+    const double c0 = 299792458.0;  // m/s
     double lambda_over4_mm = (c0 / (4.0 * f0)) * 1000.0;
 
     // empirical mechanical length factor vs d/h: factor = 0.97 - 0.0666666667 * (d/h)  (clamped to [0.90,0.96])
@@ -145,8 +228,8 @@ int main(void) {
     // Characteristic impedance of end resonator (trough-line, round rod)
     double Z_end = 138.0 * log10((1.25 * H_mm) / D_mm);
     if (Z_end < 1.0)
-        Z_end = 1.0; // sanity
-    double Z_inner = Z_end + 5.0; // simple uplift; typically a few ohms higher
+        Z_end = 1.0;  // sanity
+    double Z_inner = Z_end + 5.0;  // simple uplift; typically a few ohms higher
 
     // Tap distance from shorted end using GM3SEK formula: t = (L/90deg) * asin( sqrt( (pi*R)/(4*Z*Qe1) ) )
     // Implement with radians: t = L * (2/pi) * asin( sqrt( (M_PI*R)/(4*Z*Qe1) ) )
@@ -157,7 +240,7 @@ int main(void) {
     double tap_mm = L_end_mm * (2.0 / M_PI) * asin(arg);
 
     // Estimated unloaded Q (very rough; tweak coefficient to match your workshop). Qu ≈ K * f_MHz * H_mm (empirical).
-    const double K_qu = 0.06; // conservative air-cavity value; polish as you gain data
+    const double K_qu = 0.06;  // conservative air-cavity value; polish as you gain data
     double Qu_est = K_qu * f0_MHz * H_mm;
     if (Qu_est < 100.0)
         Qu_est = 100.0;
@@ -176,6 +259,7 @@ int main(void) {
 
     printf("\n-------------------------------------------------------------------------\n");
     printf("Design data for a %d section interdigital bandpass filter.\n", ele);
+    printf("Material                   :  %s\n", material_str[material]);
     printf("Center Frequency           : %10.4f MHz\n", f0_MHz);
     printf("Passband Ripple            : %10.3f dB\n", ripple_dB <= 0.0 ? 0.0 : ripple_dB);
     printf("System Impedance           : %10.2f Ohm\n", R_ohm);
@@ -223,7 +307,7 @@ int main(void) {
 
     printf("-------------------------------------------------------------------------\n");
     printf("\n=== Rod length corrections (geometry-aware) ===\n");
-    double f0_Hz = f0; // f0 is in Hz in this scope
+    double f0_Hz = f0;  // f0 is in Hz in this scope
     double h_m = H_mm / 1000.0;
     double d_m = D_mm / 1000.0;
     double *rod_lengths = (double*) calloc(ele, sizeof(double));
@@ -263,7 +347,10 @@ int main(void) {
     printf("Depth  : %5.2f mm or %5.3f inch\n", H_mm, toinch(H_mm));
     printf("-------------------------------------------------------------------------\n");
 
-    generate_openEMS_script("bpf_sim.m", f0_MHz, BW_MHz, R_ohm, H_mm, D_mm, E_mm, ele, ripple_dB, pos, gap, rod_lengths);
+    generate_dxf("filter.dxf", f0_MHz, BW_MHz, R_ohm, H_mm, D_mm, E_mm, ele, ripple_dB, pos, gap, rod_lengths, lambda_over4_mm, box_length, tap_mm, tap_mm);
+    generate_openEMS_script("bpf_sim.m", f0_MHz, BW_MHz, R_ohm, H_mm, D_mm, E_mm, ele, ripple_dB, pos, gap, rod_lengths, lambda_over4_mm, box_length, tap_mm,
+            tap_mm, material);
+
     free(rod_lengths);
 
     /*

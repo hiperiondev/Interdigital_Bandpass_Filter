@@ -28,9 +28,9 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-#define LINT_FACTOR   0.889   /* interior rod length factor relative to lambda/4 */
-#define LEND_FACTOR   1.005   /* end rod length multiplier relative to interior */
-#define K_QU_DEFAULT  0.06    /* empirical Qu constant (conservative default) */
+#define LINT_FACTOR   0.889   // interior rod length factor relative to lambda/4
+#define LEND_FACTOR   1.005   // end rod length multiplier relative to interior
+#define K_QU_DEFAULT  0.06    // empirical Qu constant (conservative default)
 
 double toinch(double mm);
 void butterworth_g(int n, double *g);
