@@ -162,25 +162,27 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
         fprintf(fp, "CSX = AddCylinder(CSX, '%s', 10, start, stop, r);\n\n", material_str[material]);
     }
 
-    // Add ports (with explicit half-width)
-    double port_half_mm = 1.5;
     // Port 1
-    double start_z1 = ((1 % 2) == 1) ? tap_z1 - port_half_mm : (box_height - rod_lengths[0] + tap_z1 - port_half_mm);
-    double stop_z1 = start_z1 + 2 * port_half_mm;
-    fprintf(fp, "start = [%.4f, 0, %.5f] * unit;\n", pos[1], start_z1);
-    fprintf(fp, "stop = [%.4f, 0, %.5f] * unit;\n", pos[1], stop_z1);
+    double short_z1 = 0.0;  // First rod always odd, short at bottom
+    double tap_center1 = short_z1 + tap_z1;
+    double port_start1 = tap_center1 - 1.5;
+    double port_stop1 = tap_center1 + 1.5;
+    fprintf(fp, "start = [%.4f, 0, %.4f] * unit;\n", pos[1], port_start1);
+    fprintf(fp, "stop = [%.4f, 0, %.4f] * unit;\n", pos[1], port_stop1);
     fprintf(fp, "dir = [0 0 1];\n");
-    fprintf(fp, "CSX = AddLumpedPort(CSX, 5, 1, R, start, stop, dir, 1);\n\n");
+    fprintf(fp, "[CSX, port{1}] = AddLumpedPort(CSX, 5, 1, R, start, stop, dir, 1);\n\n");
 
-    // Port N
-    double start_zN = ((ele % 2) == 1) ? tap_zN - port_half_mm : (box_height - rod_lengths[ele - 1] + tap_zN - port_half_mm);
-    double stop_zN = start_zN + 2 * port_half_mm;
-    fprintf(fp, "start = [%.4f, 0, %.5f] * unit;\n", pos[ele], start_zN);
-    fprintf(fp, "stop = [%.4f, 0, %.5f] * unit;\n", pos[ele], stop_zN);
+    // Port 2
+    double short_zN = ((ele % 2) == 1) ? 0.0 : box_height - rod_lengths[ele - 1];
+    double tap_centerN = ((ele % 2) == 1) ? short_zN + tap_zN : short_zN - tap_zN;
+    double port_startN = tap_centerN - 1.5;
+    double port_stopN = tap_centerN + 1.5;
+    fprintf(fp, "start = [%.4f, 0, %.4f] * unit;\n", pos[ele], port_startN);
+    fprintf(fp, "stop = [%.4f, 0, %.4f] * unit;\n", pos[ele], port_stopN);
     fprintf(fp, "dir = [0 0 1];\n");
-    fprintf(fp, "CSX = AddLumpedPort(CSX, 5, 2, R, start, stop, dir, 0);\n\n");
+    fprintf(fp, "[CSX, port{2}] = AddLumpedPort(CSX, 5, 2, R, start, stop, dir, 0);\n\n");
 
-    // Mesh (corrected: increased min_cell to reduce small cells, adjusted offset for thirds rule)
+    // Mesh
     fprintf(fp, "mesh = [];\n");
     fprintf(fp, "x_points = unique(sort([pos - r, pos, pos + r, pos - r + mesh_offset, pos + r - mesh_offset]));\n");
     fprintf(fp, "mesh.lines{1} = x_points;\n");
@@ -205,6 +207,38 @@ void generate_openEMS_script(const char *filename, double f0_MHz, double BW_MHz,
     fprintf(fp, "if ~exist(Sim_Path, 'dir'); mkdir(Sim_Path); end\n");
     fprintf(fp, "WriteOpenEMS([Sim_Path '/geometry.xml'], FDTD, CSX);\n");
     fprintf(fp, "RunOpenEMS(Sim_Path, 'geometry.xml');\n");
+
+    // Post-processing to define freq, S11, S21
+    fprintf(fp, "%% postprocessing & do the plots\n");
+    fprintf(fp, "freq = linspace(max([0.1*f0, f0-bw]), f0+bw, 501);\n");
+    fprintf(fp, "for p=1:2\n");
+    fprintf(fp, "    port{p} = calcPort(port{p}, Sim_Path, freq);\n");
+    fprintf(fp, "end\n");
+    fprintf(fp, "S11 = port{1}.uf.ref ./ port{1}.uf.inc;\n");
+    fprintf(fp, "S21 = port{2}.uf.tot ./ port{1}.uf.inc;\n\n");
+
+    // Generate CSV file with result values of S11 and S21 imaginary, real and modulus.
+    fprintf(fp, "%% Generate CSV file with S-parameters\n");
+    fprintf(fp, "fid = fopen('s_params.csv', 'w');\n");
+    fprintf(fp, "fprintf(fid, 'freq_MHz,real_S11,imag_S11,mod_S11,real_S21,imag_S21,mod_S21\\n');\n");
+    fprintf(fp, "for i=1:length(freq)\n");
+    fprintf(fp,
+            "    fprintf(fid, '%%f,%%f,%%f,%%f,%%f,%%f,%%f\\n', freq(i)/1e6, real(S11(i)), imag(S11(i)), abs(S11(i)), real(S21(i)), imag(S21(i)), abs(S21(i)));\n");
+    fprintf(fp, "end\n");
+    fprintf(fp, "fclose(fid);\n\n");
+
+    // Generate a PNG image of result modulus of S11 and S21
+    fprintf(fp, "%% Generate PNG image of S11 and S21 modulus\n");
+    fprintf(fp, "figure;\n");
+    fprintf(fp, "hold on;\n");
+    fprintf(fp, "plot(freq/1e6, 20*log10(abs(S11)+eps), 'b', 'LineWidth', 2);\n");
+    fprintf(fp, "plot(freq/1e6, 20*log10(abs(S21)+eps), 'r', 'LineWidth', 2);\n");
+    fprintf(fp, "xlabel('Frequency (MHz)');\n");
+    fprintf(fp, "ylabel('Magnitude (dB)');\n");
+    fprintf(fp, "legend('S11', 'S21');\n");
+    fprintf(fp, "grid on;\n");
+    fprintf(fp, "title('S-Parameters');\n");
+    fprintf(fp, "print('-dpng', 's_params.png');\n");
 
     fclose(fp);
     printf("openEMS script written to %s\n", filename);
