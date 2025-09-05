@@ -68,3 +68,10 @@ filter.dxf
 "#filter.dxf"
 filter_csx.xml
 sim/
+et
+geometry.xml
+ht
+port_it1
+port_it2
+port_ut1
+port_ut2
